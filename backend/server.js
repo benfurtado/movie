@@ -6,30 +6,70 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join, extname } from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { AccessToken } from 'livekit-server-sdk';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
+const LIVEKIT_URL = process.env.LIVEKIT_URL || '';
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || '';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
+const LIVEKIT_ENABLED = process.env.ENABLE_LIVEKIT !== '0' &&
+  Boolean(LIVEKIT_URL) &&
+  Boolean(LIVEKIT_API_KEY) &&
+  Boolean(LIVEKIT_API_SECRET);
 
 // Enable CORS for frontend
 const allowedOrigins = process.env.FRONTEND_URL 
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
   : ['http://localhost:3000', 'http://in01.aashutosh.space:3000'];
 
+console.log('CORS allowed origins:', allowedOrigins);
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      return callback(null, true);
+    }
     
+    // Check exact match first
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return;
     }
+    
+    // Normalize and check hostname match (for cases where scheme/port differ)
+    try {
+      const originUrl = new URL(origin);
+      const originHostname = originUrl.hostname;
+      
+      const hostnameMatch = allowedOrigins.some(allowed => {
+        try {
+          const allowedUrl = new URL(allowed);
+          return allowedUrl.hostname === originHostname;
+        } catch {
+          return allowed === origin;
+        }
+      });
+      
+      if (hostnameMatch) {
+        callback(null, true);
+        return;
+      }
+    } catch (e) {
+      // URL parsing failed, continue to exact match check
+    }
+    
+    console.error('CORS: Origin not allowed:', origin, 'Allowed:', allowedOrigins);
+    callback(new Error('Not allowed by CORS'));
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
@@ -234,12 +274,57 @@ function endSession(sessionId, options = {}) {
   return true;
 }
 
-loadLibrary();
-syncLibraryWithDisk();
 // In-memory session storage (in production, use Redis or database)
 const sessions = new Map();
 const userSessions = new Map(); // userId -> sessionId
+
+loadLibrary();
+syncLibraryWithDisk();
 loadSessions();
+
+// LiveKit token endpoint (must be after sessions is declared and loaded)
+app.post('/api/livekit/token', (req, res) => {
+  if (!LIVEKIT_ENABLED) {
+    return res.status(404).json({ error: 'LiveKit is disabled' });
+  }
+
+  const { sessionId, userId, userName, role } = req.body || {};
+  if (!sessionId || !userId) {
+    return res.status(400).json({ error: 'sessionId and userId are required' });
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  try {
+    const grant = {
+      roomJoin: true,
+      room: sessionId,
+      canSubscribe: true,
+      canPublish: role === 'host',
+      canPublishData: true,
+    };
+
+    const accessToken = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+      identity: userId,
+      name: userName || 'Viewer',
+      ttl: 60 * 60,
+    });
+
+    accessToken.addGrant(grant);
+
+    res.json({
+      token: accessToken.toJwt(),
+      url: LIVEKIT_URL,
+      enabled: true,
+    });
+  } catch (error) {
+    console.error('Failed to create LiveKit token', error);
+    res.status(500).json({ error: 'Failed to create LiveKit token' });
+  }
+});
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -580,8 +665,8 @@ app.use('/uploads', express.static(uploadsDir, {
 }));
 
 // WebSocket server for real-time sync
-const server = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
 });
 
 const wss = new WebSocketServer({ server, path: '/ws' });

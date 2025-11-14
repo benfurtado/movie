@@ -1,6 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import {
+  LocalVideoTrack,
+  LocalAudioTrack,
+  Room,
+  RoomEvent,
+  Track,
+  LocalTrackPublication,
+  RemoteVideoTrack,
+  RemoteAudioTrack,
+} from 'livekit-client';
 
 interface Video {
   id: string;
@@ -18,13 +28,14 @@ interface VideoPlayerProps {
   isHost: boolean;
   ws: WebSocket | null;
   hostName: string;
+  currentUserName: string;
 }
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   (typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:3001`
-    : 'http://localhost:3001');
+    ? window.location.origin
+    : 'http://localhost:3000');
 
 export default function VideoPlayer({
   sessionId,
@@ -34,6 +45,7 @@ export default function VideoPlayer({
   isHost,
   ws,
   hostName,
+  currentUserName,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
@@ -51,8 +63,19 @@ export default function VideoPlayer({
   const playerRef = useRef<any | null>(null);
 
   const currentVideo = videos[currentVideoIndex];
-const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() : '';
+  const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() : '';
   const isTs = !!currentVideo?.path?.toLowerCase().endsWith('.ts');
+
+  const livekitRoomRef = useRef<Room | null>(null);
+  const [livekitAvailable, setLivekitAvailable] = useState(false);
+  const publishedTracksRef = useRef<{
+    video?: LocalTrackPublication | null;
+    audio?: LocalTrackPublication | null;
+  }>({});
+  const [remoteVideoTrack, setRemoteVideoTrack] = useState<RemoteVideoTrack | null>(null);
+  const [remoteAudioTrack, setRemoteAudioTrack] = useState<RemoteAudioTrack | null>(null);
+  const livekitAudioRef = useRef<HTMLAudioElement | null>(null);
+  const livekitInitializedRef = useRef(false);
 
   // Attach MPEG-TS player via mpegts.js when playing .ts files
   useEffect(() => {
@@ -71,6 +94,19 @@ const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() :
         playerRef.current = null;
       }
     };
+
+    const isLivekitViewer = livekitAvailable && !isHost;
+
+    if (isLivekitViewer) {
+      destroyPlayer();
+      try {
+        videoEl.removeAttribute('src');
+        videoEl.load();
+      } catch {
+        // ignore
+      }
+      return () => {};
+    }
 
     if (!isTs) {
       destroyPlayer();
@@ -259,14 +295,242 @@ const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() :
 
   useEffect(() => {
     if (videoRef.current && currentVideo) {
-      videoRef.current.load();
-      videoRef.current.volume = volume;
-      videoRef.current.muted = isMuted;
-      if (currentTime > 0) {
-        videoRef.current.currentTime = currentTime;
+      if (!livekitAvailable || isHost) {
+        videoRef.current.load();
+        videoRef.current.volume = volume;
+        videoRef.current.muted = isMuted;
+        if (currentTime > 0) {
+          videoRef.current.currentTime = currentTime;
+        }
       }
     }
-  }, [currentVideoIndex, volume, isMuted, currentVideo]);
+  }, [currentVideoIndex, volume, isMuted, currentVideo, livekitAvailable, isHost, currentTime]);
+
+  useEffect(() => {
+    if (isHost) return;
+    const track = remoteVideoTrack;
+    const videoEl = videoRef.current;
+    if (!track || !videoEl) return;
+    track.attach(videoEl);
+    return () => {
+      track.detach(videoEl);
+    };
+  }, [remoteVideoTrack, isHost]);
+
+  useEffect(() => {
+    if (!livekitAudioRef.current && typeof window !== 'undefined') {
+      livekitAudioRef.current = document.createElement('audio');
+      livekitAudioRef.current.autoplay = true;
+      livekitAudioRef.current.setAttribute('playsinline', 'true');
+      livekitAudioRef.current.style.display = 'none';
+      document.body.appendChild(livekitAudioRef.current);
+    }
+    return () => {
+      if (livekitAudioRef.current) {
+        try {
+          document.body.removeChild(livekitAudioRef.current);
+        } catch {
+          // ignore
+        }
+        livekitAudioRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isHost) return;
+    const track = remoteAudioTrack;
+    const audioEl = livekitAudioRef.current;
+    if (!track || !audioEl) return;
+    track.attach(audioEl);
+    return () => {
+      track.detach(audioEl);
+    };
+  }, [remoteAudioTrack, isHost]);
+
+  async function fetchLivekitToken(role: 'host' | 'viewer') {
+    try {
+      const res = await fetch(`${API_URL}/api/livekit/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId,
+          userId,
+          userName: currentUserName,
+          role,
+        }),
+      });
+      if (!res.ok) {
+        setLivekitAvailable(false);
+        return null;
+      }
+      const data = await res.json();
+      setLivekitAvailable(true);
+      return data;
+    } catch (error) {
+      console.error('Failed to fetch LiveKit token', error);
+      setLivekitAvailable(false);
+      return null;
+    }
+  }
+
+  async function publishLocalTracks() {
+    if (!isHost || !livekitRoomRef.current) return;
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+    const captureSource = videoEl as HTMLVideoElement & {
+      captureStream?: () => MediaStream;
+      mozCaptureStream?: () => MediaStream;
+    };
+    const capture =
+      captureSource.captureStream?.() ||
+      captureSource.mozCaptureStream?.();
+    if (!capture) {
+      console.warn('captureStream is not supported in this browser.');
+      return;
+    }
+    const room = livekitRoomRef.current;
+
+    const unpublishTrack = (publication?: LocalTrackPublication | null) => {
+      if (publication?.track) {
+        try {
+          room.localParticipant.unpublishTrack(publication.track, false);
+        } catch (error) {
+          console.error('Failed to unpublish track', error);
+        }
+      }
+    };
+
+    if (publishedTracksRef.current.video) {
+      unpublishTrack(publishedTracksRef.current.video);
+    }
+    if (publishedTracksRef.current.audio) {
+      unpublishTrack(publishedTracksRef.current.audio);
+    }
+
+    const videoTrack = capture.getVideoTracks()[0];
+    if (videoTrack) {
+      try {
+        const localVideo = new LocalVideoTrack(videoTrack);
+        const publication = await room.localParticipant.publishTrack(localVideo);
+        publishedTracksRef.current.video = publication;
+      } catch (error) {
+        console.error('Failed to publish video track', error);
+      }
+    }
+
+    const audioTrack = capture.getAudioTracks()[0];
+    if (audioTrack) {
+      try {
+        const localAudio = new LocalAudioTrack(audioTrack);
+        const publication = await room.localParticipant.publishTrack(localAudio);
+        publishedTracksRef.current.audio = publication;
+      } catch (error) {
+        console.error('Failed to publish audio track', error);
+      }
+    }
+  }
+
+  const disconnectLivekit = () => {
+    if (livekitRoomRef.current) {
+      try {
+        livekitRoomRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      livekitRoomRef.current = null;
+    }
+    setRemoteVideoTrack(null);
+    setRemoteAudioTrack(null);
+    setLivekitAvailable(false);
+    publishedTracksRef.current.video = null;
+    publishedTracksRef.current.audio = null;
+  };
+
+  async function connectLivekit() {
+    if (livekitInitializedRef.current) return;
+    livekitInitializedRef.current = true;
+    const role = isHost ? 'host' : 'viewer';
+    const tokenData = await fetchLivekitToken(role);
+    if (!tokenData?.token || !tokenData?.url) {
+      livekitInitializedRef.current = false;
+      return;
+    }
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      stopLocalTrackOnUnpublish: true,
+    });
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication) => {
+      if (track.kind === Track.Kind.Video) {
+        setRemoteVideoTrack(track as RemoteVideoTrack);
+      }
+      if (track.kind === Track.Kind.Audio) {
+        setRemoteAudioTrack(track as RemoteAudioTrack);
+      }
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind === Track.Kind.Video) {
+        setRemoteVideoTrack(null);
+      }
+      if (track.kind === Track.Kind.Audio) {
+        setRemoteAudioTrack(null);
+      }
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      setRemoteVideoTrack(null);
+      setRemoteAudioTrack(null);
+      livekitRoomRef.current = null;
+      livekitInitializedRef.current = false;
+    });
+
+    try {
+      await room.connect(tokenData.url, tokenData.token);
+      livekitRoomRef.current = room;
+      setLivekitAvailable(true);
+      if (isHost) {
+        await publishLocalTracks();
+      }
+    } catch (error) {
+      console.error('Failed to connect to LiveKit', error);
+      livekitInitializedRef.current = false;
+      setLivekitAvailable(false);
+    }
+  }
+
+  useEffect(() => {
+    connectLivekit();
+    return () => {
+      disconnectLivekit();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, userId, currentUserName, isHost]);
+
+  useEffect(() => {
+    if (!isHost || !livekitRoomRef.current) return;
+    publishLocalTracks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentVideoIndex, isHost]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+    const handlePlaying = () => {
+      publishLocalTracks();
+    };
+    videoEl.addEventListener('playing', handlePlaying);
+    return () => {
+      videoEl.removeEventListener('playing', handlePlaying);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost]);
 
   // Real-time sync: Update current time periodically when playing
   useEffect(() => {
@@ -288,7 +552,8 @@ const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() :
   const handlePlayPause = () => {
     if (!isHost || !videoRef.current) return;
 
-    const currentVideoTime = videoRef.current.currentTime;
+    const videoTime = videoRef.current.currentTime;
+    const currentVideoTime = Number.isFinite(videoTime) ? videoTime : currentTime;
 
     if (isPlaying) {
       videoRef.current.pause();
@@ -313,18 +578,22 @@ const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() :
 
   const handleSeek = (time: number) => {
     if (!videoRef.current) return;
-
-    const newTime = Math.max(0, Math.min(time, duration));
+    const target = Number.isFinite(time) ? time : 0;
+    const newTime = Math.max(0, Math.min(target, duration));
     
     if (isHost) {
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'seek', time: newTime }));
+      if (Math.abs(videoRef.current.currentTime - newTime) > 0.4) {
+        videoRef.current.currentTime = newTime;
+        setCurrentTime(newTime);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'seek', time: newTime }));
+        }
       }
     } else {
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
+      if (Math.abs(videoRef.current.currentTime - newTime) > 0.4) {
+        videoRef.current.currentTime = newTime;
+        setCurrentTime(newTime);
+      }
     }
   };
 
@@ -450,6 +719,7 @@ const videoUrl = currentVideo ? new URL(currentVideo.path, API_URL).toString() :
           className="w-full h-full object-contain"
           crossOrigin="anonymous"
           playsInline
+          autoPlay
         />
 
         {/* Buffering Indicator */}

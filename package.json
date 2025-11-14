@@ -1,0 +1,15 @@
+{
+  "name": "movie",
+  "version": "1.0.0",
+  "description": "Rudhra is a collaborative movie and series streaming app that empowers users to upload and watch content together in real time. Designed for creators, fans, and communities, Rudhra transforms passive viewing into a shared experience.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  }
+}
