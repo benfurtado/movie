@@ -20,6 +20,7 @@ export default function Chat({ ws, currentUserId, currentUserName, controlsVisib
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [lastReadTimestamp, setLastReadTimestamp] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -27,8 +28,10 @@ export default function Chat({ ws, currentUserId, currentUserName, controlsVisib
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (isOpen) {
+      scrollToBottom();
+    }
+  }, [messages, isOpen]);
 
   useEffect(() => {
     if (!ws) return;
@@ -43,12 +46,21 @@ export default function Chat({ ws, currentUserId, currentUserName, controlsVisib
         const message = JSON.parse(event.data);
         
         if (message.type === 'chat') {
-          setMessages((prev) => [...prev, {
+          const chatMessage: ChatMessage = {
             userId: message.userId,
             userName: message.userName,
             text: message.text,
-            timestamp: message.timestamp
-          }]);
+            timestamp: message.timestamp,
+          };
+
+          setMessages((prev) => [...prev, chatMessage]);
+
+          // If chat is open when message arrives, treat it as read and scroll
+          if (isOpen) {
+            setLastReadTimestamp(chatMessage.timestamp);
+            // Let DOM update before scrolling
+            requestAnimationFrame(scrollToBottom);
+          }
         }
       } catch (error) {
         // Ignore JSON parse errors for non-JSON messages
@@ -60,7 +72,7 @@ export default function Chat({ ws, currentUserId, currentUserName, controlsVisib
     return () => {
       ws.removeEventListener('message', handleMessage);
     };
-  }, [ws]);
+  }, [ws, isOpen]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,19 +91,40 @@ export default function Chat({ ws, currentUserId, currentUserName, controlsVisib
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const unreadCount = messages.reduce(
+    (count, msg) => (msg.timestamp > lastReadTimestamp ? count + 1 : count),
+    0
+  );
+
+  const handleToggleOpen = () => {
+    setIsOpen((prev) => {
+      const next = !prev;
+      if (!prev && next) {
+        // Just opened: mark all current messages as read
+        const latest = messages[messages.length - 1];
+        if (latest) {
+          setLastReadTimestamp(latest.timestamp);
+        }
+        // Scroll to latest
+        setTimeout(scrollToBottom, 0);
+      }
+      return next;
+    });
+  };
+
   return (
     <>
       {/* Chat Toggle Button (sits to the left of Session Info without overlapping) */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggleOpen}
         className="fixed top-4 right-24 sm:top-6 sm:right-32 z-40 w-10 h-10 sm:w-12 sm:h-12 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all shadow-lg touch-manipulation"
       >
         <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
-        {messages.length > 0 && (
+        {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-white text-black text-[10px] sm:text-xs font-bold rounded-full flex items-center justify-center">
-            {messages.length > 99 ? '99+' : messages.length}
+            {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>

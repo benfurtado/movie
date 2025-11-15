@@ -88,7 +88,6 @@ export default function WatchPage() {
   const [error, setError] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
   const [ws, setWs] = useState<WebSocket | null>(null);
-  const [controlsVisible, setControlsVisible] = useState(true);
 
   useEffect(() => {
     // Get or prompt for user name
@@ -240,23 +239,13 @@ export default function WatchPage() {
       <VideoPlayer
         sessionId={sessionId}
         userId={userId}
+        userName={userName}
         videos={sessionData.videos}
         type={sessionData.type}
         isHost={isHost}
         ws={ws}
         hostName={sessionData.hostName}
-        onControlsVisibilityChange={setControlsVisible}
       />
-      <SessionInfo
-        sessionId={sessionId}
-        hostName={sessionData.hostName}
-        type={sessionData.type}
-        sessionLink={`${window.location.origin}/watch/${sessionId}`}
-        isHost={isHost}
-        controlsVisible={controlsVisible}
-      />
-      <ParticipantsList ws={ws} currentUserId={userId} controlsVisible={controlsVisible} />
-      <Chat ws={ws} currentUserId={userId} currentUserName={userName} controlsVisible={controlsVisible} />
     </div>
   );
 }
