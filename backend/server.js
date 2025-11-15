@@ -14,23 +14,17 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Enable CORS for frontend
-const allowedOrigins = process.env.FRONTEND_URL 
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:3000', 'http://in01.aashutosh.space:3000'];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+// For development, allow all origins so the frontend can always talk to the backend.
+// If you want to lock this down later, reintroduce an allowedOrigins whitelist.
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests regardless of origin (including no origin)
       callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
