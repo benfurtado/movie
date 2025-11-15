@@ -45,6 +45,10 @@ export default function VideoPlayer({
   const [isBuffering, setIsBuffering] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const lastPinchDistanceRef = useRef<number | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isUserInteractingRef = useRef(false);
   const syncThreshold = 1;
@@ -295,22 +299,12 @@ export default function VideoPlayer({
     }
   }, [currentVideoIndex, volume, isMuted, currentVideo]);
 
-  // Real-time sync: Host sends time updates periodically when playing
-  useEffect(() => {
-    if (!isHost || !videoRef.current || !ws || ws.readyState !== WebSocket.OPEN || !isPlaying) return;
-
-    const syncInterval = setInterval(() => {
-      if (videoRef.current && isPlaying) {
-        const currentTime = videoRef.current.currentTime;
-        ws.send(JSON.stringify({
-          type: 'seek',
-          time: currentTime
-        }));
-      }
-    }, 1000); // Send sync every 1 second for better accuracy
-
-    return () => clearInterval(syncInterval);
-  }, [isHost, ws, isPlaying]);
+  // NOTE:
+  // We intentionally do NOT send continuous time updates while playing.
+  // Constant 'seek' messages make guests re-seek all the time, which causes choppy playback.
+  // Sync only happens on:
+  // - initial 'sync' when a guest joins
+  // - explicit host actions: play, pause, manual seek/skip.
 
   const handlePlayPause = () => {
     if (!isHost || !videoRef.current) return;
@@ -449,6 +443,106 @@ export default function VideoPlayer({
     }, 500);
   };
 
+  // Pinch‑to‑zoom on mobile when in fullscreen
+  const getTouchDistance = (touches: TouchList | React.TouchList) => {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleVideoTouchStart = (e: React.TouchEvent<HTMLVideoElement>) => {
+    if (!isFullscreen) return;
+    if (e.touches.length === 2) {
+      lastPinchDistanceRef.current = getTouchDistance(e.touches);
+    }
+  };
+
+  const handleVideoTouchMove = (e: React.TouchEvent<HTMLVideoElement>) => {
+    if (!isFullscreen) return;
+    if (e.touches.length === 2 && lastPinchDistanceRef.current) {
+      const currentDistance = getTouchDistance(e.touches);
+      if (currentDistance <= 0) return;
+
+      const scaleFactor = currentDistance / lastPinchDistanceRef.current;
+      lastPinchDistanceRef.current = currentDistance;
+
+      setZoom((prev) => {
+        let next = prev * scaleFactor;
+        // Clamp zoom between 1x and 5x for tighter fullscreen framing
+        if (next < 1) next = 1;
+        if (next > 5) next = 5;
+        return next;
+      });
+
+      // Prevent the page from scrolling while pinching
+      e.preventDefault();
+    }
+  };
+
+  const handleVideoTouchEnd = () => {
+    if (!isFullscreen) {
+      lastPinchDistanceRef.current = null;
+      return;
+    }
+    lastPinchDistanceRef.current = null;
+    // Snap back to 1x if very close to it
+    setZoom((prev) => (prev < 1.05 ? 1 : prev));
+  };
+
+  const changeZoom = (delta: number) => {
+    setZoom((prev) => {
+      let next = prev + delta;
+      if (next < 1) next = 1;
+      if (next > 5) next = 5;
+      return Number(next.toFixed(2));
+    });
+  };
+
+  // Fullscreen handling (use the native Fullscreen API)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = async () => {
+    if (typeof document === 'undefined') return;
+    const container = playerContainerRef.current;
+    if (!container) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        // Enter fullscreen for the whole player (video + overlays)
+        if (container.requestFullscreen) {
+          await container.requestFullscreen();
+        }
+        // On supported mobile browsers, try to lock orientation to landscape
+        const anyScreen: any = typeof screen !== 'undefined' ? screen : null;
+        if (anyScreen?.orientation?.lock) {
+          try {
+            await anyScreen.orientation.lock('landscape');
+          } catch {
+            // Orientation lock might fail on some platforms – ignore
+          }
+        }
+      } else if (document.exitFullscreen) {
+        await document.exitFullscreen();
+        // Reset zoom when leaving fullscreen
+        setZoom(1);
+      }
+    } catch (error) {
+      console.error('Failed to toggle fullscreen', error);
+    }
+  };
+
   if (!currentVideo) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
@@ -459,6 +553,7 @@ export default function VideoPlayer({
 
   return (
     <div
+      ref={playerContainerRef}
       className="fixed inset-0 w-full h-full bg-black"
       onMouseMove={handleInteraction}
       onTouchStart={handleInteraction}
@@ -475,8 +570,16 @@ export default function VideoPlayer({
           ref={videoRef}
           src={isTs ? undefined : videoUrl}
           className="w-full h-full object-contain"
+          style={{
+            transform: zoom !== 1 ? `scale(${zoom})` : undefined,
+            transformOrigin: 'center center',
+            touchAction: isFullscreen ? 'none' : 'auto',
+          }}
           crossOrigin="anonymous"
           playsInline
+          onTouchStart={handleVideoTouchStart}
+          onTouchMove={handleVideoTouchMove}
+          onTouchEnd={handleVideoTouchEnd}
         />
 
         {/* Buffering Indicator */}
@@ -490,7 +593,7 @@ export default function VideoPlayer({
         {showControls && (
           <div className="absolute inset-0 pointer-events-none">
             {/* Bottom Controls */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6 pointer-events-auto">
+            <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6 pointer-events-auto bg-gradient-to-t from-black/80 via-black/50 to-transparent">
               {/* Progress Bar */}
               <div
                 className="w-full h-2 bg-zinc-900/80 rounded-full mb-4 cursor-pointer touch-none"
@@ -650,6 +753,48 @@ export default function VideoPlayer({
                       <span className="md:hidden">With {hostName}</span>
                     </div>
                   )}
+
+                  {/* Zoom controls – only visible in fullscreen */}
+                  {isFullscreen && (
+                    <div className="flex items-center gap-1 sm:gap-2 bg-white/10 backdrop-blur-sm border border-white/20 rounded-full px-2 py-1">
+                      <button
+                        onClick={() => changeZoom(-0.25)}
+                        className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/20 active:bg-white/30 text-white text-xs font-semibold touch-manipulation"
+                        title="Zoom out"
+                      >
+                        -
+                      </button>
+                      <span className="text-[10px] sm:text-xs text-white min-w-[32px] text-center">
+                        {Math.round(zoom * 100)}%
+                      </span>
+                      <button
+                        onClick={() => changeZoom(0.25)}
+                        className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/20 active:bg-white/30 text-white text-xs font-semibold touch-manipulation"
+                        title="Zoom in"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Fullscreen toggle */}
+                  <button
+                    onClick={handleToggleFullscreen}
+                    className="flex-shrink-0 w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-full bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 active:bg-white/30 transition-all touch-manipulation"
+                    title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                  >
+                    {isFullscreen ? (
+                      // Exit fullscreen icon
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9L5 5m0 0h4M5 5v4m10 6l4 4m0 0h-4m4 0v-4M9 15l-4 4m0 0h4m-4 0v-4m10-6l4-4m0 0h-4m4 0v4" />
+                      </svg>
+                    ) : (
+                      // Enter fullscreen icon
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 3H5a2 2 0 00-2 2v3m0 8v3a2 2 0 002 2h3m8-18h3a2 2 0 012 2v3m0 8v3a2 2 0 01-2 2h-3" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
