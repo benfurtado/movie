@@ -49,6 +49,7 @@ export default function VideoPlayer({
   const [isMuted, setIsMuted] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [controlsLocked, setControlsLocked] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoom, setZoom] = useState(1);
   // Option A: auto keep awake while playing
@@ -534,6 +535,7 @@ export default function VideoPlayer({
   };
 
   const handleInteraction = () => {
+    if (controlsLocked) return;
     setShowControls(true);
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
@@ -675,7 +677,7 @@ export default function VideoPlayer({
       onMouseMove={handleInteraction}
       onTouchStart={handleInteraction}
       onMouseLeave={() => {
-        if (isPlaying) {
+        if (isPlaying && !controlsLocked) {
           setShowControls(false);
         }
       }}
@@ -848,6 +850,46 @@ export default function VideoPlayer({
           </div>
         )}
       </div>
+      {/* Left-center lock button: when locked, controls never show from taps until unlocked */}
+      <button
+        onClick={() => {
+          setControlsLocked((prev) => {
+            const next = !prev;
+            if (next) {
+              // Lock: hide controls and prevent auto-show on tap
+              setShowControls(false);
+            } else {
+              // Unlock: show controls again
+              setShowControls(true);
+            }
+            return next;
+          });
+        }}
+        className="absolute left-2 top-1/2 -translate-y-1/2 z-50 w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/10 border border-white/30 text-white hover:bg-white/20 active:bg-white/30 transition-all"
+        title={controlsLocked ? 'Unlock controls' : 'Lock controls'}
+      >
+        {controlsLocked ? (
+          // Locked (controls blocked)
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 11V7a4 4 0 118 0v4m-9 0h10v7a2 2 0 01-2 2H7a2 2 0 01-2-2v-7z"
+            />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 11V9a4 4 0 117.465 1.5M7 11h10v7a2 2 0 01-2 2H7a2 2 0 01-2-2v-7z"
+            />
+          </svg>
+        )}
+      </button>
+
       <SessionInfo
         sessionId={sessionId}
         hostName={hostName}
