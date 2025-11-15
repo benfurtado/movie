@@ -43,8 +43,8 @@ export default function SessionLinkShare({ sessionLink, onAddVideo }: SessionLin
       if (!success) {
         throw new Error('Clipboard unavailable');
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error('Failed to copy session link:', error);
     }

@@ -20,14 +20,24 @@ export default function ParticipantsList({ ws, currentUserId }: ParticipantsList
     if (!ws) return;
 
     const handleMessage = (event: MessageEvent) => {
-      const message = JSON.parse(event.data);
-      
-      if (message.type === 'sync' && message.participants) {
-        setParticipants(message.participants);
-      } else if (message.type === 'participantsUpdate') {
-        setParticipants(message.participants);
-      } else if (message.type === 'userJoined') {
-        // Participant will be updated via participantsUpdate
+      // Skip binary messages (video chunks)
+      if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+        return;
+      }
+
+      try {
+        const message = JSON.parse(event.data);
+        
+        if (message.type === 'sync' && message.participants) {
+          setParticipants(message.participants);
+        } else if (message.type === 'participantsUpdate') {
+          setParticipants(message.participants);
+        } else if (message.type === 'userJoined') {
+          // Participant will be updated via participantsUpdate
+        }
+      } catch (error) {
+        // Ignore JSON parse errors for non-JSON messages
+        console.warn('Failed to parse WebSocket message in ParticipantsList:', error);
       }
     };
 

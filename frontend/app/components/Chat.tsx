@@ -33,15 +33,25 @@ export default function Chat({ ws, currentUserId, currentUserName }: ChatProps) 
     if (!ws) return;
 
     const handleMessage = (event: MessageEvent) => {
-      const message = JSON.parse(event.data);
-      
-      if (message.type === 'chat') {
-        setMessages((prev) => [...prev, {
-          userId: message.userId,
-          userName: message.userName,
-          text: message.text,
-          timestamp: message.timestamp
-        }]);
+      // Skip binary messages (video chunks)
+      if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+        return;
+      }
+
+      try {
+        const message = JSON.parse(event.data);
+        
+        if (message.type === 'chat') {
+          setMessages((prev) => [...prev, {
+            userId: message.userId,
+            userName: message.userName,
+            text: message.text,
+            timestamp: message.timestamp
+          }]);
+        }
+      } catch (error) {
+        // Ignore JSON parse errors for non-JSON messages
+        console.warn('Failed to parse WebSocket message in Chat:', error);
       }
     };
 

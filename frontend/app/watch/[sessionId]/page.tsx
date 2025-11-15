@@ -10,13 +10,13 @@ import ParticipantsList from '../../components/ParticipantsList';
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   (typeof window !== 'undefined'
-    ? window.location.origin
-    : 'http://localhost:3000');
+    ? `${window.location.protocol}//${window.location.hostname}:3001`
+    : 'http://localhost:3001');
 const WS_URL_BASE =
   process.env.NEXT_PUBLIC_WS_URL ||
   (typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
-    : 'ws://localhost:3000');
+    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:3001`
+    : 'ws://localhost:3001');
 
 const buildWsUrl = () => {
   const endpoint = WS_URL_BASE.endsWith('/ws')
@@ -244,7 +244,6 @@ export default function WatchPage() {
         isHost={isHost}
         ws={ws}
         hostName={sessionData.hostName}
-        currentUserName={userName}
       />
       <SessionInfo
         sessionId={sessionId}
