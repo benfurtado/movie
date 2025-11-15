@@ -744,18 +744,6 @@ function handlePlayback(sessionId, userId, isPlaying, currentTime) {
   const session = sessions.get(sessionId);
   if (!session) return;
 
-  // Only host can control playback (for now - can be changed)
-  if (session.hostId !== userId) {
-    const userWs = session.participants.get(userId)?.ws;
-    if (userWs && userWs.readyState === 1) {
-      userWs.send(JSON.stringify({
-        type: 'error',
-        message: 'Only the host can control playback'
-      }));
-    }
-    return;
-  }
-
   session.isPlaying = isPlaying;
   if (currentTime !== undefined) {
     session.currentTime = currentTime;
@@ -774,15 +762,6 @@ function handleSeek(sessionId, userId, time) {
   const session = sessions.get(sessionId);
   if (!session) return;
 
-  // Only host can control seeking
-  if (session.hostId !== userId) {
-    // But allow periodic sync updates from host
-    if (time !== undefined) {
-      session.currentTime = time;
-    }
-    return;
-  }
-
   session.currentTime = time;
   session.lastActivity = new Date();
   persistSessions();
@@ -796,18 +775,6 @@ function handleSeek(sessionId, userId, time) {
 function handleVideoChange(sessionId, userId, videoIndex) {
   const session = sessions.get(sessionId);
   if (!session) return;
-
-  // Only host can change videos
-  if (session.hostId !== userId) {
-    const userWs = session.participants.get(userId)?.ws;
-    if (userWs && userWs.readyState === 1) {
-      userWs.send(JSON.stringify({
-        type: 'error',
-        message: 'Only the host can change videos'
-      }));
-    }
-    return;
-  }
 
   if (videoIndex >= 0 && videoIndex < session.videos.length) {
     session.currentVideoIndex = videoIndex;
@@ -829,12 +796,11 @@ function handleChatMessage(sessionId, userId, text) {
   if (!session) return;
 
   const participant = session.participants.get(userId);
-  if (!participant) return;
 
   const chatMessage = {
     type: 'chat',
     userId,
-    userName: participant.name,
+    userName: participant?.name || 'Unknown',
     text,
     timestamp: Date.now()
   };

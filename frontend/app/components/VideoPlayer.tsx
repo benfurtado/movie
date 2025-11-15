@@ -142,7 +142,7 @@ export default function VideoPlayer({
     };
   }, [isTs, videoUrl]);
 
-  // Handle WebSocket messages
+  // Handle WebSocket messages (sync playback for ALL users)
   useEffect(() => {
     if (!ws) return;
 
@@ -158,29 +158,27 @@ export default function VideoPlayer({
         switch (message.type) {
 
         case 'sync':
-          if (!isHost) {
-            setCurrentVideoIndex(message.currentVideoIndex || 0);
-            if (videoRef.current && message.currentTime !== undefined) {
-              const timeDiff = Math.abs(videoRef.current.currentTime - message.currentTime);
-              // Only sync if difference is significant (more than 0.5 seconds)
-              if (timeDiff > 0.5) {
-                videoRef.current.currentTime = message.currentTime;
-                setCurrentTime(message.currentTime);
-              }
+          setCurrentVideoIndex(message.currentVideoIndex || 0);
+          if (videoRef.current && typeof message.currentTime === 'number') {
+            const timeDiff = Math.abs(videoRef.current.currentTime - message.currentTime);
+            // Only sync if difference is significant (more than 0.5 seconds)
+            if (timeDiff > 0.5) {
+              videoRef.current.currentTime = message.currentTime;
+              setCurrentTime(message.currentTime);
             }
-            setIsPlaying(message.isPlaying || false);
-            // Sync play/pause state
-            if (message.isPlaying && videoRef.current && videoRef.current.paused) {
-              videoRef.current.play().catch(console.error);
-            } else if (!message.isPlaying && videoRef.current && !videoRef.current.paused) {
-              videoRef.current.pause();
-            }
+          }
+          setIsPlaying(Boolean(message.isPlaying));
+          // Sync play/pause state
+          if (message.isPlaying && videoRef.current && videoRef.current.paused) {
+            videoRef.current.play().catch(console.error);
+          } else if (!message.isPlaying && videoRef.current && !videoRef.current.paused) {
+            videoRef.current.pause();
           }
           break;
 
         case 'play':
-          if (!isHost && videoRef.current) {
-            if (message.currentTime !== undefined) {
+          if (videoRef.current) {
+            if (typeof message.currentTime === 'number') {
               videoRef.current.currentTime = message.currentTime;
               setCurrentTime(message.currentTime);
             }
@@ -190,8 +188,8 @@ export default function VideoPlayer({
           break;
 
         case 'pause':
-          if (!isHost && videoRef.current) {
-            if (message.currentTime !== undefined) {
+          if (videoRef.current) {
+            if (typeof message.currentTime === 'number') {
               videoRef.current.currentTime = message.currentTime;
               setCurrentTime(message.currentTime);
             }
@@ -201,7 +199,7 @@ export default function VideoPlayer({
           break;
 
         case 'seek':
-          if (!isHost && videoRef.current) {
+          if (videoRef.current && typeof message.time === 'number') {
             const timeDiff = Math.abs(videoRef.current.currentTime - message.time);
             // Sync if difference is more than 0.5 seconds
             if (timeDiff > 0.5) {
@@ -212,7 +210,7 @@ export default function VideoPlayer({
           break;
 
         case 'videoChange':
-          if (!isHost) {
+          if (typeof message.videoIndex === 'number') {
             setCurrentVideoIndex(message.videoIndex);
             setCurrentTime(0);
             setIsPlaying(false);
@@ -237,7 +235,7 @@ export default function VideoPlayer({
     return () => {
       ws.removeEventListener('message', handleMessage);
     };
-  }, [ws, isHost]);
+  }, [ws]);
 
   // Video event handlers
   useEffect(() => {
@@ -307,7 +305,7 @@ export default function VideoPlayer({
   // - explicit host actions: play, pause, manual seek/skip.
 
   const handlePlayPause = () => {
-    if (!isHost || !videoRef.current) return;
+    if (!videoRef.current) return;
 
     const currentVideoTime = videoRef.current.currentTime;
 
@@ -336,16 +334,11 @@ export default function VideoPlayer({
     if (!videoRef.current) return;
 
     const newTime = Math.max(0, Math.min(time, duration));
-    
-    if (isHost) {
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'seek', time: newTime }));
-      }
-    } else {
-      videoRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
+
+    videoRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'seek', time: newTime }));
     }
   };
 
@@ -380,8 +373,6 @@ export default function VideoPlayer({
   };
 
   const handleVideoChange = (index: number) => {
-    if (!isHost) return;
-
     if (index >= 0 && index < videos.length) {
       setCurrentVideoIndex(index);
       setCurrentTime(0);
@@ -515,14 +506,13 @@ export default function VideoPlayer({
 
   const handleToggleFullscreen = async () => {
     if (typeof document === 'undefined') return;
-    const container = playerContainerRef.current;
-    if (!container) return;
 
     try {
       if (!document.fullscreenElement) {
-        // Enter fullscreen for the whole player (video + overlays)
-        if (container.requestFullscreen) {
-          await container.requestFullscreen();
+        // Enter fullscreen for the whole page so VideoPlayer + Chat + SessionInfo stay visible
+        const rootEl = document.documentElement;
+        if (rootEl.requestFullscreen) {
+          await rootEl.requestFullscreen();
         }
         // On supported mobile browsers, try to lock orientation to landscape
         const anyScreen: any = typeof screen !== 'undefined' ? screen : null;
@@ -615,11 +605,8 @@ export default function VideoPlayer({
                   {/* Play/Pause Button */}
                   <button
                     onClick={handlePlayPause}
-                    disabled={!isHost}
-                    className={`flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 active:bg-white/30 transition-all touch-manipulation ${
-                      !isHost ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                    title={isHost ? (isPlaying ? 'Pause' : 'Play') : 'Only host can control playback'}
+                    className="flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 active:bg-white/30 transition-all touch-manipulation"
+                    title={isPlaying ? 'Pause' : 'Play'}
                   >
                     {isPlaying ? (
                       <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -715,9 +702,9 @@ export default function VideoPlayer({
                     <div className="flex items-center gap-2 sm:gap-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg px-2 sm:px-4 py-1.5 sm:py-2">
                       <button
                         onClick={() => handleVideoChange(currentVideoIndex - 1)}
-                        disabled={!isHost || currentVideoIndex === 0}
+                        disabled={currentVideoIndex === 0}
                         className={`w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center text-white hover:bg-white/20 active:bg-white/30 rounded transition-all touch-manipulation ${
-                          !isHost || currentVideoIndex === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                          currentVideoIndex === 0 ? 'opacity-50 cursor-not-allowed' : ''
                         }`}
                         title="Previous episode"
                       >
@@ -730,9 +717,9 @@ export default function VideoPlayer({
                       </span>
                       <button
                         onClick={() => handleVideoChange(currentVideoIndex + 1)}
-                        disabled={!isHost || currentVideoIndex === videos.length - 1}
+                        disabled={currentVideoIndex === videos.length - 1}
                         className={`w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center text-white hover:bg-white/20 active:bg-white/30 rounded transition-all touch-manipulation ${
-                          !isHost || currentVideoIndex === videos.length - 1 ? 'opacity-50 cursor-not-allowed' : ''
+                          currentVideoIndex === videos.length - 1 ? 'opacity-50 cursor-not-allowed' : ''
                         }`}
                         title="Next episode"
                       >

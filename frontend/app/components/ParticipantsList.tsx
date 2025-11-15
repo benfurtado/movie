@@ -10,9 +10,10 @@ interface Participant {
 interface ParticipantsListProps {
   ws: WebSocket | null;
   currentUserId: string;
+  controlsVisible?: boolean;
 }
 
-export default function ParticipantsList({ ws, currentUserId }: ParticipantsListProps) {
+export default function ParticipantsList({ ws, currentUserId, controlsVisible = true }: ParticipantsListProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -51,7 +52,9 @@ export default function ParticipantsList({ ws, currentUserId }: ParticipantsList
     <>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 sm:top-6 sm:left-6 z-50 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 sm:px-5 sm:py-3 text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all duration-200 text-xs sm:text-sm font-medium uppercase tracking-wider shadow-lg touch-manipulation"
+        className={`fixed top-4 left-4 sm:top-6 sm:left-6 z-50 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 sm:px-5 sm:py-3 text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all duration-200 text-xs sm:text-sm font-medium uppercase tracking-wider shadow-lg touch-manipulation transition-opacity ${
+          controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
       >
         <span className="hidden sm:inline">Viewers ({participants.length})</span>
         <span className="sm:hidden">({participants.length})</span>

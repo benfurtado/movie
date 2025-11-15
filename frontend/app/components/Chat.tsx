@@ -13,9 +13,10 @@ interface ChatProps {
   ws: WebSocket | null;
   currentUserId: string;
   currentUserName: string;
+  controlsVisible?: boolean;
 }
 
-export default function Chat({ ws, currentUserId, currentUserName }: ChatProps) {
+export default function Chat({ ws, currentUserId, currentUserName, controlsVisible = true }: ChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -80,10 +81,10 @@ export default function Chat({ ws, currentUserId, currentUserName }: ChatProps) 
 
   return (
     <>
-      {/* Chat Toggle Button */}
+      {/* Chat Toggle Button (sits to the left of Session Info without overlapping) */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40 w-12 h-12 sm:w-14 sm:h-14 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all shadow-lg touch-manipulation"
+        className="fixed top-4 right-24 sm:top-6 sm:right-32 z-40 w-10 h-10 sm:w-12 sm:h-12 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all shadow-lg touch-manipulation"
       >
         <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -97,7 +98,9 @@ export default function Chat({ ws, currentUserId, currentUserName }: ChatProps) 
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className="fixed bottom-20 right-4 sm:bottom-24 sm:right-6 z-40 w-[calc(100vw-2rem)] sm:w-96 max-w-sm bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl flex flex-col h-[400px] sm:h-[500px]">
+        <div
+          className="fixed top-16 left-4 right-4 sm:top-20 sm:right-6 sm:left-auto z-40 w-auto sm:w-96 max-w-sm bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl flex flex-col h-[30vh] sm:h-[300px]"
+        >
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-zinc-800">
             <h3 className="text-white font-semibold text-lg">Chat</h3>

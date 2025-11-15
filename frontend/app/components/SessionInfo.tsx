@@ -9,6 +9,7 @@ interface SessionInfoProps {
   type: 'movie' | 'series';
   sessionLink: string;
   isHost?: boolean;
+  controlsVisible?: boolean;
 }
 
 export default function SessionInfo({
@@ -17,6 +18,7 @@ export default function SessionInfo({
   type,
   sessionLink,
   isHost = false,
+  controlsVisible = true,
 }: SessionInfoProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -54,13 +56,30 @@ export default function SessionInfo({
   };
 
   return (
-    <div className="fixed top-4 right-4 sm:top-6 sm:right-6 z-50">
+    <div
+      className={`fixed top-4 right-4 sm:top-6 sm:right-6 z-50 transition-opacity duration-300 ${
+        controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+    >
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 sm:px-5 sm:py-3 text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all duration-200 text-xs sm:text-sm font-medium uppercase tracking-wider shadow-lg touch-manipulation"
+        className="w-10 h-10 sm:w-11 sm:h-11 flex items-center justify-center bg-zinc-900 border border-zinc-800 rounded-full text-white hover:bg-zinc-800 active:bg-zinc-700 transition-all duration-200 shadow-lg touch-manipulation"
+        title={isExpanded ? 'Hide session info' : 'Show session info'}
       >
-        <span className="hidden sm:inline">{isExpanded ? 'Hide Info' : 'Session Info'}</span>
-        <span className="sm:hidden">{isExpanded ? 'Hide' : 'Info'}</span>
+        {/* Info icon */}
+        <svg
+          className="w-4 h-4 sm:w-5 sm:h-5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M13 16h-1v-4h-1m1-4h.01M12 3a9 9 0 100 18 9 9 0 000-18z"
+          />
+        </svg>
       </button>
 
       {isExpanded && (
